@@ -1,14 +1,12 @@
+import json
+
 # ================================================================
 # SISTEMA EXPERTO: Diagnóstico de PC
-# Implementación con motor de inferencia hacia adelante
 # ================================================================
 
-# ──────────────────────────────────────────────────────────────
-# COMPONENTE 1: BASE DE CONOCIMIENTO
-# Aquí vive el conocimiento del experto técnico.
-# Cada regla tiene: id, condiciones (lista de síntomas requeridos),
-# conclusión y un factor de confianza de 0 a 1.
-# ──────────────────────────────────────────────────────────────
+# ================================================================
+# BASE DE CONOCIMIENTO
+# ================================================================
 
 base_de_conocimiento = [
     {
@@ -346,126 +344,218 @@ base_de_conocimiento = [
 ]
 
 
+# ================================================================
+# BASE DE HECHOS
+# ================================================================
 
-# ──────────────────────────────────────────────────────────────
-# COMPONENTE 2: BASE DE HECHOS (Working Memory)
-# Estado actual del caso. Usamos un set de Python para
-# representar los síntomas presentes (eficiente para búsqueda).
-# ──────────────────────────────────────────────────────────────
+base_de_hechos = set()
 
-base_de_hechos = set()  # vacía al inicio, se llena con los síntomas
-
-# ──────────────────────────────────────────────────────────────
-# COMPONENTE 3: MOTOR DE INFERENCIA
-# Funciones de equiparación y resolución de conflictos
-# ──────────────────────────────────────────────────────────────
+# ================================================================
+# MOTOR DE INFERENCIA
+# ================================================================
 
 def equiparar(base_conocimiento, hechos):
-    """
-    Proceso de equiparación (pattern matching).
-    Retorna todas las reglas cuyas condiciones están satisfechas
-    por los hechos actuales. Esto es el 'conflict set'.
-    """
-    conflict_set = []
+
+    reglas_activadas = []
+
     for regla in base_conocimiento:
-        # Verificar si TODOS los síntomas de la regla están en los hechos
-        # set.issubset() es O(len(condiciones)), más eficiente que un bucle
-        if set(regla['condiciones']).issubset(hechos):
-            conflict_set.append(regla)
-    return conflict_set
 
+        coincidencias = 0
 
-def resolver_conflictos(conflict_set):
-    """
-    Estrategia de resolución de conflictos: mayor confianza.
-    Si hay empate, preferir la regla con más condiciones (más específica).
-    """
-    if not conflict_set:
-        return None
-    return max(
-        conflict_set,
-        key=lambda r: (r['confianza'], len(r['condiciones']))
-    )
+        for condicion in regla["condiciones"]:
+            if condicion in hechos:
+                coincidencias += 1
 
+        porcentaje = coincidencias / len(regla["condiciones"])
 
-def inferir(base_conocimiento, hechos):
-    """
-    Motor de inferencia principal.
-    Ejecuta el ciclo de equiparación → resolución → ejecución.
-    """
-    print()
-    print('━' * 55)
-    print('  MOTOR DE INFERENCIA INICIADO')
-    print('━' * 55)
-    print(f'  Hechos ingresados: {hechos}')
-    print()
+        if coincidencias > 0:
 
-    conflict_set = equiparar(base_conocimiento, hechos)
+            confianza_final = regla["confianza"] * porcentaje
 
-    if not conflict_set:
-        print('  ⚠ No se encontraron reglas aplicables.')
-        print('  Considera agregar más síntomas o revisar la base de conocimiento.')
+            reglas_activadas.append({
+                "regla": regla,
+                "coincidencias": coincidencias,
+                "porcentaje": porcentaje,
+                "confianza_final": confianza_final
+            })
+
+    return reglas_activadas
+
+# ================================================================
+# MÚLTIPLES DIAGNÓSTICOS
+# ================================================================
+
+def mostrar_diagnosticos(resultados):
+
+    if not resultados:
+        print("\nNo se encontraron diagnósticos.")
         return
 
-    print(f'  Reglas que aplican (conflict set): {[r["id"] for r in conflict_set]}')
-    print()
+    resultados.sort(
+        key=lambda x: x["confianza_final"],
+        reverse=True
+    )
 
-    regla = resolver_conflictos(conflict_set)
+    print("\n" + "=" * 60)
+    print("RANKING DE DIAGNÓSTICOS")
+    print("=" * 60)
 
-    print('  DIAGNÓSTICO')
-    print('  ───────────────────────────────────────────────────')
-    print(f'  Regla aplicada: {regla["id"]} — {regla["descripcion"]}')
-    print(f'  Recomendación:  {regla["conclusion"]}')
-    print(f'  Confianza:      {regla["confianza"] * 100:.0f}%')
-    print()
+    for i, resultado in enumerate(resultados, start=1):
 
-    # COMPONENTE 4: INTERFAZ DE EXPLICACIÓN
-    print('  TRAZABILIDAD DEL RAZONAMIENTO')
-    print('  ───────────────────────────────────────────────────')
-    print(f'  Síntomas que activaron la regla: {regla["condiciones"]}')
-    if len(conflict_set) > 1:
-        descartadas = [r['id'] for r in conflict_set if r['id'] != regla['id']]
-        print(f'  Reglas descartadas por menor confianza: {descartadas}')
-    print('━' * 55)
+        regla = resultado["regla"]
 
+        print(f"\n#{i}")
+        print(f"Regla: {regla['id']}")
+        print(f"Descripción: {regla['descripcion']}")
+        print(f"Conclusión: {regla['conclusion']}")
+        print(f"Confianza: {resultado['confianza_final'] * 100:.2f}%")
+        print(
+            f"Síntomas coincidentes: "
+            f"{resultado['coincidencias']}/{len(regla['condiciones'])}"
+        )
+        print(f"Causas posibles: {', '.join(regla['causas'])}")
 
+# ================================================================
+# ENCADENAMIENTO HACIA ATRÁS
+# ================================================================
 
-# ──────────────────────────────────────────────────────────────
-# COMPONENTE 5: INTERFAZ DE USUARIO
-# ──────────────────────────────────────────────────────────────
+def backward_chain(meta, base_conocimiento, hechos, visitados=None):
+
+    if visitados is None:
+        visitados = set()
+
+    if meta in visitados:
+        return []
+
+    visitados.add(meta)
+
+    preguntas = []
+
+    for regla in base_conocimiento:
+
+        if regla["conclusion"] == meta:
+
+            for condicion in regla["condiciones"]:
+
+                if condicion not in hechos:
+                    preguntas.append(condicion)
+
+    return preguntas
+
+# ================================================================
+# EXPORTAR RED DE INFERENCIA
+# ================================================================
+
+def exportar_red(base_conocimiento):
+
+    red = {
+        "nodos": [],
+        "aristas": []
+    }
+
+    nodos = set()
+
+    for regla in base_conocimiento:
+
+        conclusion = regla["conclusion"]
+
+        nodos.add(conclusion)
+
+        for condicion in regla["condiciones"]:
+
+            nodos.add(condicion)
+
+            red["aristas"].append({
+                "desde": condicion,
+                "hacia": conclusion,
+                "regla": regla["id"]
+            })
+
+    red["nodos"] = list(nodos)
+
+    print("\n" + "=" * 60)
+    print("RED DE INFERENCIA")
+    print("=" * 60)
+
+    print(json.dumps(red, indent=4, ensure_ascii=False))
+
+# ================================================================
+# PREGUNTAS
+# ================================================================
 
 PREGUNTAS = {
-    "no_enciende":              "¿El equipo NO enciende (sin luces, sin sonido)?",
-    "sin_luces":                "¿No hay ninguna luz LED encendida?",
-    "sin_sonido":               "¿No se escucha ningún sonido al encender?",
-    "enciende":                 "¿El equipo SÍ enciende (hay luces y/o sonido)?",
-    "pitidos_arranque":         "¿Se escuchan pitidos (beeps) al encender?",
-    "sin_video":                "¿La pantalla no muestra absolutamente nada?",
-    "pantalla_negra":           "¿La pantalla queda en negro (sin pitidos)?",
-    "sin_pitidos":              "¿No se escuchan pitidos?",
-    "inicia_lento":             "¿El equipo tarda más de 3 minutos en iniciar?",
-    "disco_al_100":             "¿El administrador de tareas muestra disco al 100%?",
-    "ventilador_siempre_activo":"¿El ventilador está siempre a máxima velocidad?",
-    "pantalla_azul_frecuente":  "¿Aparece pantalla azul (BSOD) con frecuencia?",
-    "se_apaga_solo":            "¿El equipo se apaga solo sin advertencia?",
-    "calor_excesivo":           "¿El chasis está muy caliente al tacto?"
+
+    "no_enciende": "¿La PC no enciende?",
+    "sin_luces": "¿No hay luces encendidas?",
+    "sin_sonido": "¿No hay sonidos?",
+    "enciende": "¿La PC enciende?",
+    "pitidos_arranque": "¿Hay pitidos al arrancar?",
+    "sin_video": "¿No hay imagen?",
+    "pantalla_negra": "¿La pantalla está negra?",
+    "sin_pitidos": "¿No hay pitidos?",
+    "inicia_lento": "¿La PC inicia lenta?",
+    "disco_al_100": "¿El disco está al 100%?",
+    "se_apaga_solo": "¿La PC se apaga sola?",
+    "calor_excesivo": "¿La PC tiene mucho calor?"
+
 }
 
+# ================================================================
+# INTERFAZ
+# ================================================================
+
 def consultar():
-    print()
-    print('=' * 55)
-    print('  SISTEMA EXPERTO: Diagnóstico de Computador')
-    print('  Responde s (sí) o n (no) a cada pregunta')
-    print('=' * 55)
-    print()
+
+    print("=" * 60)
+    print("SISTEMA EXPERTO - DIAGNÓSTICO DE PC")
+    print("=" * 60)
 
     for sintoma, pregunta in PREGUNTAS.items():
-        resp = input(f'  {pregunta} [s/n]: ').strip().lower()
-        if resp == 's':
+
+        respuesta = input(f"{pregunta} [s/n]: ").lower()
+
+        if respuesta == "s":
             base_de_hechos.add(sintoma)
 
-    inferir(base_de_conocimiento, base_de_hechos)
+    resultados = equiparar(
+        base_de_conocimiento,
+        base_de_hechos
+    )
 
+    mostrar_diagnosticos(resultados)
 
-# Ejecutar
+    print("\n" + "=" * 60)
+    print("ENCADENAMIENTO HACIA ATRÁS")
+    print("=" * 60)
+
+    meta = input(
+        "\nEscribe un diagnóstico para analizar: "
+    )
+
+    faltantes = backward_chain(
+        meta,
+        base_de_conocimiento,
+        base_de_hechos
+    )
+
+    if faltantes:
+
+        print(
+            "\nSíntomas faltantes para confirmar el diagnóstico:"
+        )
+
+        for f in faltantes:
+            print("-", f)
+
+    else:
+        print(
+            "\nEl diagnóstico ya tiene suficientes síntomas."
+        )
+
+    exportar_red(base_de_conocimiento)
+
+# ================================================================
+# EJECUCIÓN
+# ================================================================
+
 consultar()
